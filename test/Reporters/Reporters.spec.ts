@@ -1,50 +1,138 @@
-import { moveToComponents, reuseComponents, removeComponents } from '../../src/Reporters'
+import {
+  moveAllToComponents,
+  moveDuplicatesToComponents,
+  reuseComponents,
+  removeComponents,
+} from '../../src/Reporters'
 import { inputYAML } from '../fixtures'
 import { Parser } from '@asyncapi/parser'
 import { getOptimizableComponents } from '../../src/ComponentProvider'
-import { OptimizableComponentGroup } from '../../src/index.d'
+import { OptimizableComponentGroup } from '../../src/types'
 
-const MoveToComponentsExpectedResult = [
+const moveAllToComponentsExpectedResult: any[] = [
   {
-    path: 'channels.smartylighting/event/{streetlightId}/lighting/measured.subscribe.message.traits[0].headers',
+    path: 'channels.withDuplicatedMessage1.messages.duped1',
     action: 'move',
-    target: 'components.schemas.schema-1',
+    target: 'components.messages.duped1',
   },
   {
-    path: 'channels.smartylighting/action/{streetlightId}/turn/on.publish.message.traits[0].headers',
-    action: 'reuse',
-    target: 'components.schemas.schema-1',
-  },
-  {
-    path: 'channels.smartylighting/event/{streetlightId}/lighting/measured.subscribe.message.traits[0].headers.properties.my-app-header',
+    path: 'channels.withDuplicatedMessage2.messages.duped2',
     action: 'move',
-    target: 'components.schemas.schema-2',
+    target: 'components.messages.duped2',
   },
   {
-    path: 'channels.smartylighting/action/{streetlightId}/turn/on.publish.message.traits[0].headers.properties.my-app-header',
-    action: 'reuse',
-    target: 'components.schemas.schema-2',
-  },
-  {
-    path: 'channels.smartylighting/event/{streetlightId}/lighting/measured.parameters.streetlightId',
+    path: 'channels.withFullFormMessage.messages.canBeReused',
     action: 'move',
-    target: 'components.parameters.parameter-1',
+    target: 'components.messages.canBeReused',
   },
   {
-    path: 'channels.smartylighting/action/{streetlightId}/turn/on.parameters.streetlightId',
+    path: 'channels.withDuplicatedMessage1',
+    action: 'move',
+    target: 'components.channels.withDuplicatedMessage1FromXOrigin',
+  },
+  {
+    path: 'channels.withDuplicatedMessage2',
+    action: 'move',
+    target: 'components.channels.withDuplicatedMessage2',
+  },
+  {
+    path: 'channels.withFullFormMessage',
+    action: 'move',
+    target: 'components.channels.withFullFormMessage',
+  },
+  {
+    path: 'channels.UserSignedUp1',
+    action: 'move',
+    target: 'components.channels.UserSignedUp1',
+  },
+  {
+    path: 'channels.UserSignedUp2',
+    action: 'move',
+    target: 'components.channels.UserSignedUp2',
+  },
+  {
+    path: 'channels.deleteAccount',
+    action: 'move',
+    target: 'components.channels.deleteAccount',
+  },
+  {
+    path: 'channels.withDuplicatedMessage1.messages.duped1.payload',
+    action: 'move',
+    target: 'components.schemas.payload',
+  },
+  {
+    path: 'channels.withDuplicatedMessage2.messages.duped2.payload',
+    action: 'move',
+    target: 'components.schemas.payload',
+  },
+  {
+    path: 'channels.UserSignedUp1.messages.myMessage.payload',
+    action: 'move',
+    target: 'components.schemas.payload',
+  },
+  {
+    path: 'channels.UserSignedUp1.messages.myMessage.payload.properties.displayName',
+    action: 'move',
+    target: 'components.schemas.displayName',
+  },
+  {
+    path: 'channels.UserSignedUp1.messages.myMessage.payload.properties.email',
+    action: 'move',
+    target: 'components.schemas.email',
+  },
+  {
+    path: 'channels.deleteAccount.messages.deleteUser.payload',
+    action: 'move',
+    target: 'components.schemas.payload',
+  },
+  {
+    path: 'operations.user/deleteAccount.subscribe',
+    action: 'move',
+    target: 'components.operations.subscribe',
+  },
+]
+const moveDuplicatesToComponentsExpectedResult: any[] = [
+  {
+    path: 'channels.withDuplicatedMessage1.messages.duped1',
+    action: 'move',
+    target: 'components.messages.duped1',
+  },
+  {
+    path: 'channels.withDuplicatedMessage2.messages.duped2',
     action: 'reuse',
-    target: 'components.parameters.parameter-1',
+    target: 'components.messages.duped1',
+  },
+  {
+    path: 'channels.UserSignedUp1',
+    action: 'move',
+    target: 'components.channels.UserSignedUp1',
+  },
+  {
+    path: 'channels.UserSignedUp2',
+    action: 'reuse',
+    target: 'components.channels.UserSignedUp1',
+  },
+  {
+    path: 'channels.withDuplicatedMessage1.messages.duped1.payload',
+    action: 'move',
+    target: 'components.schemas.payload',
+  },
+  {
+    path: 'channels.withDuplicatedMessage2.messages.duped2.payload',
+    action: 'reuse',
+    target: 'components.schemas.payload',
   },
 ]
 const RemoveComponentsExpectedResult = [
-  { path: 'components.messages.unusedMessage', action: 'remove' },
-  { path: 'components.parameters.unusedParameter', action: 'remove' },
+  { path: 'components.messages.unUsedMessage', action: 'remove' },
+  { path: 'components.channels.unUsedChannel', action: 'remove' },
+  { path: 'components.schemas.canBeReused', action: 'remove' },
 ]
 const ReuseComponentsExpectedResult = [
   {
-    path: 'channels.smartylighting/event/{streetlightId}/lighting/measured.subscribe.message.payload.properties.sentAt',
+    path: 'channels.withFullFormMessage.messages.canBeReused.payload',
     action: 'reuse',
-    target: 'components.schemas.sentAt',
+    target: 'components.schemas.canBeReused',
   },
 ]
 
@@ -54,11 +142,19 @@ describe('Optimizers', () => {
     const asyncapiDocument = await new Parser().parse(inputYAML, { applyTraits: false })
     optimizableComponents = getOptimizableComponents(asyncapiDocument.document!)
   })
-  describe('MoveToComponents', () => {
+  describe('moveAllToComponents', () => {
     test('should contain the correct optimizations.', () => {
-      const report = moveToComponents(optimizableComponents)
-      expect(report.elements).toEqual(MoveToComponentsExpectedResult)
-      expect(report.type).toEqual('moveToComponents')
+      const report = moveAllToComponents(optimizableComponents)
+      expect(report.elements).toEqual(moveAllToComponentsExpectedResult)
+      expect(report.type).toEqual('moveAllToComponents')
+    })
+  })
+
+  describe('moveDuplicatesToComponents', () => {
+    test('should contain the correct optimizations.', () => {
+      const report = moveDuplicatesToComponents(optimizableComponents)
+      expect(report.elements).toEqual(moveDuplicatesToComponentsExpectedResult)
+      expect(report.type).toEqual('moveDuplicatesToComponents')
     })
   })
 

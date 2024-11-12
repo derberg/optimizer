@@ -5,14 +5,20 @@ import {
   Options,
   OptimizableComponentGroup,
   Reporter,
-} from './index.d'
+} from './types'
 import { Parser } from '@asyncapi/parser'
-import { removeComponents, reuseComponents, moveToComponents } from './Reporters'
+import {
+  removeComponents,
+  reuseComponents,
+  moveAllToComponents,
+  moveDuplicatesToComponents,
+} from './Reporters'
 import YAML from 'js-yaml'
 import merge from 'merge-deep'
 import * as _ from 'lodash'
 import { getOptimizableComponents } from './ComponentProvider'
-import { hasParent, sortReportElements, toJS } from './Utils'
+import { filterReportElements, hasParent, sortReportElements, toJS } from './Utils'
+import Debug from 'debug'
 
 export enum Action {
   Move = 'move',
@@ -41,7 +47,12 @@ export class Optimizer {
    */
   constructor(private YAMLorJSON: any) {
     this.outputObject = toJS(this.YAMLorJSON)
-    this.reporters = [removeComponents, reuseComponents, moveToComponents]
+    this.reporters = [
+      removeComponents,
+      reuseComponents,
+      moveAllToComponents,
+      moveDuplicatesToComponents,
+    ]
   }
 
   /**
@@ -51,15 +62,21 @@ export class Optimizer {
   async getReport(): Promise<Report> {
     const parser = new Parser()
     const parsedDocument = await parser.parse(this.YAMLorJSON, { applyTraits: false })
-    if (!parsedDocument.document) throw new Error('Parsing failed.')
+    if (!parsedDocument.document) {
+      // eslint-disable-next-line no-undef, no-console
+      console.error(parsedDocument.diagnostics)
+      throw new Error('Parsing failed.')
+    }
     this.components = getOptimizableComponents(parsedDocument.document)
     const rawReports = this.reporters.map((reporter) => reporter(this.components))
-    const filteredReports = rawReports.map((report) => ({
+    const reportsWithParents = rawReports.map((report) => ({
       type: report.type,
       elements: report.elements.filter((reportElement) =>
         hasParent(reportElement, this.outputObject)
       ),
     }))
+
+    const filteredReports = filterReportElements(reportsWithParents)
     const sortedReports = filteredReports.map((report) => sortReportElements(report))
     this.reports = sortedReports
 
@@ -71,13 +88,18 @@ export class Optimizer {
    * @typedef {Object} Rules
    * @property {Boolean=} reuseComponents - whether to reuse components from `components` section or not. Defaults to `true`.
    * @property {Boolean=} removeComponents - whether to remove un-used components from `components` section or not. Defaults to `true`.
-   * @property {Boolean=} moveToComponents - whether to move duplicated components to the `components` section or not. Defaults to `true`.
+   * @property {Boolean=} moveAllToComponents - whether to move all AsyncAPI Specification-valid components to the `components` section or not. Defaults to `true`.
+   * @property {Boolean=} moveDuplicatesToComponents - whether to move duplicated components to the `components` section or not. Defaults to `false`.
    */
-
+  /**
+   * @typedef {Object} DisableOptimizationFor
+   * @property {Boolean=} schema - whether object `schema` should be excluded from the process of optimization (`true` instructs **not** to add calculated `schemas` to the optimized AsyncAPI Document.)
+   */
   /**
    * @typedef {Object} Options
    * @property {Rules=} rules - the list of rules that specifies which type of optimizations should be applied.
    * @property {String=} output - specifies which type of output user wants, `'JSON'` or `'YAML'`. Defaults to `'YAML'`;
+   * @property {DisableOptimizationFor=} disableOptimizationFor - the list of objects that should be excluded from the process of optimization.
    */
   /**
    * This function is used to get the optimized document after seeing the report.
@@ -91,9 +113,13 @@ export class Optimizer {
       rules: {
         reuseComponents: true,
         removeComponents: true,
-        moveToComponents: true,
+        moveAllToComponents: true,
+        moveDuplicatesToComponents: false, // there is no need to move duplicates if `moveAllToComponents` is `true`
       },
       output: Output.YAML,
+      disableOptimizationFor: {
+        schema: false,
+      },
     }
     options = merge(defaultOptions, options)
     if (!this.reports) {
@@ -102,6 +128,11 @@ export class Optimizer {
       )
     }
     for (const report of this.reports) {
+      if (options.disableOptimizationFor?.schema === true) {
+        report.elements = report.elements.filter(
+          (element) => !element.target?.includes('.schemas.')
+        )
+      }
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       if (options.rules[report.type] === true) {
@@ -124,6 +155,7 @@ export class Optimizer {
   }
 
   private applyReport(changes: ReportElement[]): void {
+    const debug = Debug('optimizer:applyReport')
     for (const change of changes) {
       switch (change.action) {
         case Action.Move:
@@ -131,6 +163,7 @@ export class Optimizer {
           _.set(this.outputObject, change.path, {
             $ref: `#/${change.target?.replace(/\./g, '/')}`,
           })
+          debug('moved %s to %s', change.path, change.target)
           break
 
         case Action.Reuse:
@@ -139,12 +172,14 @@ export class Optimizer {
               $ref: `#/${change.target?.replace(/\./g, '/')}`,
             })
           }
+          debug('%s reused %s', change.path, change.target)
           break
 
         case Action.Remove:
           _.unset(this.outputObject, change.path)
           //if parent becomes empty after removing, parent should be removed as well.
           this.removeEmptyParent(change.path)
+          debug('removed %s', change.path)
           break
       }
     }

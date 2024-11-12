@@ -4,8 +4,10 @@ import {
   OptimizableComponentGroup,
   ReportElement,
   Reporter,
-} from '../index.d'
+} from '../types'
 import { createReport, isEqual, isInChannels, isInComponents } from '../Utils'
+import Debug from 'debug'
+const debug = Debug('reporter:reuseComponents')
 
 const isChannelToComponent = (
   component1: OptimizableComponent,
@@ -35,6 +37,10 @@ const findDuplicateComponents = (
       }
     }
   }
+  for (const element of elements) {
+    debug('%s can reuse %s', element.path, element.target)
+  }
+
   return elements
 }
 
